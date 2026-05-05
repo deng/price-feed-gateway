@@ -1,0 +1,24 @@
+{
+  "name": "price-feed-gateway",
+  "version": "0.1.0",
+  "description": "Cryptocurrency price feed proxy gateway for ZeroWallet - aggregates prices from Binance, Bitget, API Ninjas, and DexScreener",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "cp -n .env.example .env 2>/dev/null; wrangler dev",
+    "dev": "wrangler dev",
+    "deploy": "dotenv -- wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
+    "dotenv-cli": "^11.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0",
+    "wrangler": "^3.0.0"
+  },
+  "dependencies": {
+    "hono": "^4.12.16"
+  }
+}

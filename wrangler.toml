@@ -1,0 +1,25 @@
+name = "price-feed-gateway"
+main = "src/index.ts"
+compatibility_date = "2025-07-18"
+
+# API base URLs
+[vars]
+BINANCE_BASE_URL = "https://api.binance.com"
+BITGET_BASE_URL = "https://api.bitget.com"
+APININJAS_BASE_URL = "https://api.api-ninjas.com"
+DEXSCREENER_BASE_URL = "https://api.dexscreener.com"
+
+# Exchange enable/disable toggles
+ENABLE_BINANCE = "true"
+ENABLE_BITGET = "true"
+ENABLE_APININJAS = "true"
+ENABLE_DEXSCREENER = "true"
+
+# Cache TTL in seconds
+PRICE_CACHE_TTL_CEX = "10"
+PRICE_CACHE_TTL_DEX = "30"
+
+# Request timeout in seconds
+REQUEST_TIMEOUT_SECS = "10"
+
+# API Ninjas API key (set via `npx wrangler secret put APININJAS_API_KEY`)
