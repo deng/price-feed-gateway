@@ -2,6 +2,11 @@ name = "price-feed-gateway"
 main = "src/index.ts"
 compatibility_date = "2025-07-18"
 
+# Custom domain route (replace zone_id with your Cloudflare zone ID)
+# routes = [
+#   { pattern = "price-feed.example.com/*", zone_id = "your-zone-id" }
+# ]
+
 # API base URLs
 [vars]
 BINANCE_BASE_URL = "https://api.binance.com"
@@ -22,4 +27,5 @@ PRICE_CACHE_TTL_DEX = "30"
 # Request timeout in seconds
 REQUEST_TIMEOUT_SECS = "10"
 
-# API Ninjas API key (set via `npx wrangler secret put APININJAS_API_KEY`)
+# Secrets (set via `npx wrangler secret put`):
+#   APININJAS_API_KEY
