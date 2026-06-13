@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { swaggerUI } from '@hono/swagger-ui';
+import { openApiSpec } from './openapi';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -583,6 +585,10 @@ app.get('/health', (c) => {
     version: '0.1.0',
   } satisfies HealthResponse);
 });
+
+// OpenAPI spec & docs UI
+app.get('/openapi.json', (c) => c.json(openApiSpec));
+app.get('/docs', swaggerUI({ url: '/openapi.json' }));
 
 // Price query
 // GET /api/v1/price?symbol=BTCUSDT&exchange=binance
