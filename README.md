@@ -114,11 +114,11 @@ GET /api/v1/price?chain=eip155:1&address=0xdac17f958d2ee523a2206206994597c13d831
 ```
 
 **参数：**
-- `address`（必需）：代币合约地址
+- `address`（必需）：代币合约地址。提供时绕过 symbol/base/quote，直接走 DexScreener 查询
 - `chain`（可选）：CAIP-2 链标识，用于过滤链，例如 `eip155:1`（Ethereum）、`eip155:56`（BSC）
 - 使用 DexScreener 查询，返回 USD 价格
 
-**注意：** 必须提供 `symbol` 或同时提供 `base` 和 `quote`，或提供 `address`。`address` 优先级最高。
+**注意：** 三种查询模式互斥——必须提供 `symbol`（或 `base`+`quote`）或 `address`。`address` 优先级最高，提供时完全绕过 symbol 解析。
 
 #### 单交易所响应
 

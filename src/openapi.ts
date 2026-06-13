@@ -36,7 +36,7 @@ export const openApiSpec = {
     '/api/v1/price': {
       get: {
         summary: 'Get cryptocurrency price',
-        description: 'Query price by trading pair symbol or by token contract address. Supports single exchange or all exchanges.',
+        description: 'Query price by trading pair symbol or by token contract address. Supports single exchange or all exchanges. Three mutually exclusive query modes: (1) symbol or base+quote — any exchange; (2) address + optional chain — DexScreener only, bypasses symbol parsing.',
         tags: ['Price'],
         parameters: [
           {
@@ -63,7 +63,7 @@ export const openApiSpec = {
           {
             name: 'address',
             in: 'query',
-            description: 'Token contract address for DexScreener lookup.',
+            description: 'Token contract address. When provided, bypasses symbol/base/quote parsing and queries DexScreener directly.',
             schema: { type: 'string' },
             example: '0xdac17f958d2ee523a2206206994597c13d831ec7',
           },
