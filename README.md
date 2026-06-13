@@ -11,6 +11,8 @@
   - Bitget（全球领先的加密货币交易所）
   - API Ninjas（支持主流加密货币价格）
   - DexScreener（DEX 聚合器，支持多链 DEX 价格查询）
+- 🔍 **按合约地址查询** — 通过代币合约地址精确查询价格，解决同名 symbol 冲突问题
+- 📦 **批量查询** — `POST /api/v1/price/batch` 一次请求查询多个代币价格
 - 🔄 智能多 DEX 支持
   - 自动检测交易对在多个 DEX 的存在
   - 基于流动性自动选择最优 DEX
@@ -81,7 +83,7 @@ GET /health
 
 ### 获取价格
 
-支持两种查询方式：
+支持三种查询方式：
 
 #### 方式 1：使用交易对符号
 
@@ -104,7 +106,19 @@ GET /api/v1/price?base=BTC&quote=USDT&exchange=binance
 - `quote`（必需）：报价货币符号，例如 `USDT`
 - `exchange`（可选）：交易所名称
 
-**注意：** 必须提供 `symbol` 或同时提供 `base` 和 `quote`。如果两者都提供，优先使用 `base` 和 `quote`。
+#### 方式 3：使用合约地址（精确查询）
+
+```
+GET /api/v1/price?address=0xdac17f958d2ee523a2206206994597c13d831ec7
+GET /api/v1/price?chain=eip155:1&address=0xdac17f958d2ee523a2206206994597c13d831ec7
+```
+
+**参数：**
+- `address`（必需）：代币合约地址
+- `chain`（可选）：CAIP-2 链标识，用于过滤链，例如 `eip155:1`（Ethereum）、`eip155:56`（BSC）
+- 使用 DexScreener 查询，返回 USD 价格
+
+**注意：** 必须提供 `symbol` 或同时提供 `base` 和 `quote`，或提供 `address`。`address` 优先级最高。
 
 #### 单交易所响应
 
@@ -117,6 +131,23 @@ GET /api/v1/price?base=BTC&quote=USDT&exchange=binance
     "exchange": "binance",
     "timestamp": 1696161600000,
     "cached": false
+  }
+}
+```
+
+合约地址查询响应会额外包含 `chain` 和 `contractAddress` 字段：
+
+```json
+{
+  "success": true,
+  "data": {
+    "symbol": "USDT",
+    "price": 1.00,
+    "exchange": "dexscreener:uniswap",
+    "timestamp": 1696161600000,
+    "cached": false,
+    "chain": "eip155:1",
+    "contractAddress": "0xdac17f958d2ee523a2206206994597c13d831ec7"
   }
 }
 ```
@@ -145,6 +176,61 @@ GET /api/v1/price?base=BTC&quote=USDT&exchange=binance
 }
 ```
 
+### 批量查询
+
+```
+POST /api/v1/price/batch
+Content-Type: application/json
+```
+
+**请求体：**
+```json
+{
+  "tokens": [
+    { "symbol": "ETH" },
+    { "chain": "eip155:1", "address": "0xdac17f958d2ee523a2206206994597c13d831ec7" }
+  ]
+}
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "success": true,
+      "data": {
+        "symbol": "ETHUSDT",
+        "price": 3456.78,
+        "exchange": "binance",
+        "timestamp": 1696161600000,
+        "cached": false
+      },
+      "request": { "symbol": "ETH" }
+    },
+    {
+      "success": true,
+      "data": {
+        "symbol": "USDT",
+        "price": 1.00,
+        "exchange": "dexscreener:uniswap",
+        "timestamp": 1696161600000,
+        "cached": false,
+        "chain": "eip155:1",
+        "contractAddress": "0xdac17f958d2ee523a2206206994597c13d831ec7"
+      },
+      "request": { "chain": "eip155:1", "address": "0xdac17f958d2ee523a2206206994597c13d831ec7" }
+    }
+  ]
+}
+```
+
+- 每个 token 独立查询，互不影响
+- symbol 查询走 Binance，address 查询走 DexScreener
+- 部分失败不影响其他结果
+```
+
 ## 配置
 
 通过 `wrangler.toml` 和 `wrangler secret` 配置：
@@ -169,7 +255,7 @@ GET /api/v1/price?base=BTC&quote=USDT&exchange=binance
 ```bash
 npm run dev          # 本地开发
 npm run deploy       # 部署到 Cloudflare
-npm test             # 运行测试（26 个测试）
+npm test             # 运行测试（33 个测试）
 npm run typecheck    # 类型检查
 npm run test:watch   # 监听模式测试
 ```

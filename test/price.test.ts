@@ -561,6 +561,205 @@ describe('DexScreener - multi-DEX support', () => {
 });
 
 // ---------------------------------------------------------------------------
+// DexScreener token address mock
+// ---------------------------------------------------------------------------
+function dexscreenerTokenAddressMock() {
+  const addrLower = '0xdac17f958d2ee523a2206206994597c13d831ec7';
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
+    const url = getUrlString(input);
+    if (url.includes('dexscreener') && url.includes('/tokens/')) {
+      return new Response(JSON.stringify({
+        schemaVersion: '1.0',
+        pairs: [
+          {
+            chainId: 'ethereum',
+            dexId: 'uniswap',
+            url: 'https://example.com',
+            pairAddress: '0xpair1',
+            baseToken: { address: addrLower, name: 'Tether USD', symbol: 'USDT' },
+            quoteToken: { address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', name: 'Wrapped Ether', symbol: 'WETH' },
+            priceNative: '0.0005',
+            priceUsd: '1.00',
+            liquidity: { usd: 50000000 },
+          },
+          {
+            chainId: 'bsc',
+            dexId: 'pancakeswap',
+            url: 'https://example.com',
+            pairAddress: '0xpair2',
+            baseToken: { address: '0x55d398326f99059ff775485246999027b3197955', name: 'Tether USD', symbol: 'USDT' },
+            quoteToken: { address: addrLower, name: 'Tether USD', symbol: 'USDT' },
+            priceNative: '1',
+            priceUsd: '1.00',
+            liquidity: { usd: 100000000 },
+          },
+          {
+            chainId: 'bsc',
+            dexId: 'pancakeswap',
+            url: 'https://example.com',
+            pairAddress: '0xpair3',
+            baseToken: { address: addrLower, name: 'Tether USD', symbol: 'USDT' },
+            quoteToken: { address: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', name: 'Wrapped BNB', symbol: 'WBNB' },
+            priceNative: '0.002',
+            priceUsd: '1.00',
+            liquidity: { usd: 80000000 },
+          },
+        ],
+      }), { status: 200 });
+    }
+    if (url.includes('binance')) return binanceMockResponse();
+    if (url.includes('bitget')) return bitgetMockResponse();
+    if (url.includes('ninjas')) return apininjasMockResponse();
+    if (url.includes('dexscreener')) return dexscreenerMockResponse();
+    return new Response('Not found', { status: 404 });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Address-based queries (GET)
+// ---------------------------------------------------------------------------
+describe('GET /api/v1/price - address query', () => {
+  beforeEach(() => {
+    dexscreenerTokenAddressMock();
+  });
+
+  it('should return price for a token address', async () => {
+    const app = await createApp();
+    const res = await app.fetch(
+      mockRequest('GET', 'http://localhost/api/v1/price?address=0xdac17f958d2ee523a2206206994597c13d831ec7'),
+      mockEnv,
+    );
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.data.contractAddress).toBe('0xdac17f958d2ee523a2206206994597c13d831ec7');
+    expect(body.data.price).toBe(1.00);
+    expect(body.data.exchange).toContain('dexscreener:');
+  });
+
+  it('should filter by chain', async () => {
+    const app = await createApp();
+    const res = await app.fetch(
+      mockRequest('GET', 'http://localhost/api/v1/price?chain=eip155:1&address=0xdac17f958d2ee523a2206206994597c13d831ec7'),
+      mockEnv,
+    );
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.data.chain).toBe('eip155:1');
+    expect(body.data.exchange).toContain('uniswap');
+  });
+
+  it('should return 400 when DexScreener is disabled', async () => {
+    const disabledEnv = { ...mockEnv, ENABLE_DEXSCREENER: 'false' };
+    const app = await createApp();
+    const res = await app.fetch(
+      mockRequest('GET', 'http://localhost/api/v1/price?address=0xdac17f958d2ee523a2206206994597c13d831ec7'),
+      disabledEnv,
+    );
+    expect(res.status).toBe(400);
+    const body: any = await res.json();
+    expect(body.error).toContain('disabled');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batch price query (POST)
+// ---------------------------------------------------------------------------
+describe('POST /api/v1/price/batch', () => {
+  beforeEach(() => {
+    dexscreenerTokenAddressMock();
+  });
+
+  it('should return prices for multiple tokens', async () => {
+    const app = await createApp();
+    const res = await app.fetch(
+      new Request('http://localhost/api/v1/price/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tokens: [
+            { symbol: 'BTC' },
+            { chain: 'eip155:1', address: '0xdac17f958d2ee523a2206206994597c13d831ec7' },
+          ],
+        }),
+      }),
+      mockEnv,
+    );
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.success).toBe(true);
+    expect(Array.isArray(body.data)).toBe(true);
+    expect(body.data.length).toBe(2);
+
+    // Symbol-based result (from Binance)
+    const symbolResult = body.data[0];
+    expect(symbolResult.success).toBe(true);
+    expect(symbolResult.data.price).toBeDefined();
+
+    // Address-based result (from DexScreener)
+    const addressResult = body.data[1];
+    expect(addressResult.success).toBe(true);
+    expect(addressResult.data.contractAddress).toBe('0xdac17f958d2ee523a2206206994597c13d831ec7');
+    expect(addressResult.data.price).toBe(1.00);
+  });
+
+  it('should return 400 for empty tokens array', async () => {
+    const app = await createApp();
+    const res = await app.fetch(
+      new Request('http://localhost/api/v1/price/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokens: [] }),
+      }),
+      mockEnv,
+    );
+    expect(res.status).toBe(400);
+    const body: any = await res.json();
+    expect(body.error).toContain('tokens array is required');
+  });
+
+  it('should return 400 for invalid JSON', async () => {
+    const app = await createApp();
+    const res = await app.fetch(
+      new Request('http://localhost/api/v1/price/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: 'not-json',
+      }),
+      mockEnv,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('should handle address query errors gracefully', async () => {
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'));
+
+    const app = await createApp();
+    const res = await app.fetch(
+      new Request('http://localhost/api/v1/price/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tokens: [
+            { symbol: 'ETH' },
+            { chain: 'eip155:1', address: '0x1234567890123456789012345678901234567890' },
+          ],
+        }),
+      }),
+      mockEnv,
+    );
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    // Symbol-based should fail (network error)
+    // Address-based should also fail
+    expect(body.data.length).toBe(2);
+    expect(body.data.some((r: any) => r.success === false)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // CORS
 // ---------------------------------------------------------------------------
 describe('CORS headers', () => {
@@ -578,6 +777,7 @@ describe('CORS headers', () => {
     );
     expect(res.headers.get('access-control-allow-origin')).toBe('*');
     expect(res.headers.get('access-control-allow-methods')).toContain('GET');
+    expect(res.headers.get('access-control-allow-methods')).toContain('POST');
     expect(res.headers.get('access-control-max-age')).toBe('86400');
   });
 });

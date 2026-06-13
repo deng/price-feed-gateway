@@ -10,12 +10,16 @@ export interface Price {
   exchange: string;
   timestamp: number;  // unix ms
   cached: boolean;
+  chain?: string;
+  contractAddress?: string;
 }
 
 export interface PriceRequest {
   symbol?: string;
   base?: string;
   quote?: string;
+  chain?: string;
+  address?: string;
   exchange?: string;
 }
 
@@ -29,6 +33,26 @@ interface MultiPriceResponse {
   success: boolean;
   data: Price[];
   error?: string;
+}
+
+// Batch types
+interface BatchPriceItem {
+  symbol?: string;
+  base?: string;
+  quote?: string;
+  chain?: string;
+  address?: string;
+}
+
+interface BatchPriceRequestBody {
+  tokens: BatchPriceItem[];
+}
+
+interface BatchPriceResponseItem {
+  success: boolean;
+  data?: Price;
+  error?: string;
+  request: { symbol?: string; chain?: string; address?: string };
 }
 
 interface HealthResponse {
@@ -161,6 +185,25 @@ function parseDexSymbol(symbol: string): { base: string; quote: string } | null 
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Chain ID helpers (CAIP-2 → DexScreener chainId)
+// ---------------------------------------------------------------------------
+function caip2ToDexChain(caip2: string): string | null {
+  const map: Record<string, string> = {
+    'eip155:1': 'ethereum',
+    'eip155:56': 'bsc',
+    'eip155:137': 'polygon',
+    'eip155:43114': 'avalanche',
+    'eip155:10': 'optimism',
+    'eip155:42161': 'arbitrum',
+    'eip155:250': 'fantom',
+    'eip155:8453': 'base',
+    'eip155:100': 'gnosis',
+    'solana:5eykt4UsC9g2kiNkGfzE4v2gM9qzDdLuq8vRKji2iCqg': 'solana',
+  };
+  return map[caip2.toLowerCase()] || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -393,6 +436,78 @@ async function getDexScreenerAllPrices(env: Env, symbol: string): Promise<Price[
 }
 
 // ---------------------------------------------------------------------------
+// DexScreener: get price by contract address
+// ---------------------------------------------------------------------------
+async function getDexScreenerPriceByAddress(env: Env, chain: string, address: string): Promise<Price> {
+  const url = `${env.DEXSCREENER_BASE_URL}/latest/dex/tokens/${address}`;
+  const res = await fetch(url, { signal: timeoutSignal(env.REQUEST_TIMEOUT_SECS) });
+  if (!res.ok) {
+    throw new Error(`DexScreener API error ${res.status}: ${await res.text()}`);
+  }
+  const data = (await res.json()) as DexScreenerResponse;
+
+  let pairs = data.pairs;
+  if (!pairs || pairs.length === 0) {
+    throw new Error(`No pairs found for address ${address}`);
+  }
+
+  // Filter by chain if specified (CAIP-2 → DexScreener chainId)
+  const addrLower = address.toLowerCase();
+  if (chain) {
+    const dexChain = caip2ToDexChain(chain);
+    if (dexChain) {
+      pairs = pairs.filter(p => p.chainId.toLowerCase() === dexChain);
+    }
+  }
+
+  if (pairs.length === 0) {
+    throw new Error(`No pairs found for address ${address} on chain ${chain}`);
+  }
+
+  // Find pairs where the searched token is the base token
+  let relevantPairs = pairs.filter(p => p.baseToken.address.toLowerCase() === addrLower);
+
+  // If none as base token, use pairs where it's the quote token
+  if (relevantPairs.length === 0) {
+    relevantPairs = pairs.filter(p => p.quoteToken.address.toLowerCase() === addrLower);
+  }
+
+  // Sort by USD liquidity descending
+  relevantPairs.sort((a, b) => {
+    const aLiq = a.liquidity?.usd ?? 0;
+    const bLiq = b.liquidity?.usd ?? 0;
+    return bLiq - aLiq;
+  });
+
+  // Dedup by dex ID (keep highest liquidity)
+  const seen = new Set<string>();
+  const deduped = relevantPairs.filter(p => {
+    if (seen.has(p.dexId)) return false;
+    seen.add(p.dexId);
+    return true;
+  });
+
+  const best = deduped[0];
+  if (!best) {
+    throw new Error(`No matching pair found for address ${address}`);
+  }
+
+  const isBase = best.baseToken.address.toLowerCase() === addrLower;
+  const tokenSymbol = isBase ? best.baseToken.symbol : best.quoteToken.symbol;
+  const priceUsd = best.priceUsd ? parseFloat(best.priceUsd) : null;
+
+  return {
+    symbol: tokenSymbol,
+    price: priceUsd ?? parseFloat(best.priceNative),
+    exchange: `dexscreener:${best.dexId}`,
+    timestamp: Date.now(),
+    cached: false,
+    chain,
+    contractAddress: address,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Cache instance (per-Worker isolate)
 // ---------------------------------------------------------------------------
 let priceCache: PriceCache | undefined;
@@ -455,7 +570,7 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', cors({
   origin: '*',
-  allowMethods: ['GET', 'OPTIONS'],
+  allowMethods: ['GET', 'POST', 'OPTIONS'],
   allowHeaders: ['Content-Type'],
   maxAge: 86400,
 }));
@@ -473,8 +588,22 @@ app.get('/health', (c) => {
 // GET /api/v1/price?symbol=BTCUSDT&exchange=binance
 // GET /api/v1/price?symbol=BTCUSDT
 // GET /api/v1/price?base=BTC&quote=USDT&exchange=binance
+// GET /api/v1/price?address=0x...&chain=eip155:1
 app.get('/api/v1/price', async (c) => {
   const params = c.req.query() as PriceRequest;
+
+  // Contract address query — uses DexScreener directly
+  if (params.address) {
+    if (!c.env.ENABLE_DEXSCREENER || c.env.ENABLE_DEXSCREENER !== 'true') {
+      return c.json({ success: false, error: 'DexScreener is disabled' } satisfies PriceResponse, 400);
+    }
+    try {
+      const price = await getDexScreenerPriceByAddress(c.env, params.chain || '', params.address);
+      return c.json({ success: true, data: price } satisfies PriceResponse);
+    } catch (err) {
+      return c.json({ success: false, error: (err as Error).message } satisfies PriceResponse, 500);
+    }
+  }
 
   // Parse symbol
   const parsed = getParsedSymbol(params);
@@ -596,6 +725,52 @@ app.get('/api/v1/price', async (c) => {
     success: true,
     data: prices,
   } satisfies MultiPriceResponse);
+});
+
+// ---------------------------------------------------------------------------
+// Batch price query
+// POST /api/v1/price/batch
+// Body: { tokens: [{ symbol: "ETH" }, { chain: "eip155:1", address: "0x..." }] }
+// ---------------------------------------------------------------------------
+app.post('/api/v1/price/batch', async (c) => {
+  let body: BatchPriceRequestBody;
+  try {
+    body = await c.req.json<BatchPriceRequestBody>();
+  } catch {
+    return c.json({ success: false, error: 'Invalid JSON body' }, 400);
+  }
+
+  if (!body.tokens || !Array.isArray(body.tokens) || body.tokens.length === 0) {
+    return c.json({ success: false, error: 'tokens array is required' }, 400);
+  }
+
+  const results = await Promise.allSettled(
+    body.tokens.map(async (item) => {
+      // Address-based: use DexScreener
+      if (item.address) {
+        if (!c.env.ENABLE_DEXSCREENER || c.env.ENABLE_DEXSCREENER !== 'true') {
+          return { success: false as const, error: 'DexScreener is disabled', request: { symbol: item.symbol, chain: item.chain, address: item.address } };
+        }
+        const price = await getDexScreenerPriceByAddress(c.env, item.chain || '', item.address);
+        return { success: true as const, data: price, request: { symbol: item.symbol, chain: item.chain, address: item.address } };
+      }
+
+      // Symbol-based: use Binance (fastest CEX)
+      const parsed = getParsedSymbol(item);
+      if ('error' in parsed) {
+        return { success: false as const, error: parsed.error, request: { symbol: item.symbol } };
+      }
+      const price = await getBinancePrice(c.env, parsed.symbol);
+      return { success: true as const, data: price, request: { symbol: price.symbol } };
+    }),
+  );
+
+  const data: BatchPriceResponseItem[] = results.map((r) => {
+    if (r.status === 'fulfilled') return r.value;
+    return { success: false, error: (r.reason as Error)?.message || 'Unknown error', request: {} };
+  });
+
+  return c.json({ success: true, data });
 });
 
 // ---------------------------------------------------------------------------
