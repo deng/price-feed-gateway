@@ -16,10 +16,16 @@ async function resetCache() {
 const mockEnv = {
   BINANCE_BASE_URL: 'https://api.binance.com',
   BITGET_BASE_URL: 'https://api.bitget.com',
+  OKX_BASE_URL: 'https://www.okx.com',
+  COINBASE_BASE_URL: 'https://api.coinbase.com',
+  KUCOIN_BASE_URL: 'https://api.kucoin.com',
   APININJAS_BASE_URL: 'https://api.api-ninjas.com',
   DEXSCREENER_BASE_URL: 'https://api.dexscreener.com',
   ENABLE_BINANCE: 'true',
   ENABLE_BITGET: 'true',
+  ENABLE_OKX: 'true',
+  ENABLE_COINBASE: 'true',
+  ENABLE_KUCOIN: 'true',
   ENABLE_APININJAS: 'true',
   ENABLE_DEXSCREENER: 'true',
   PRICE_CACHE_TTL_CEX: '10',
@@ -52,6 +58,45 @@ function bitgetMockResponse(symbol = 'BTCUSDT', price = '65430.50') {
   }), { status: 200 });
 }
 
+function okxMockResponse(symbol = 'BTCUSDT', price = '65431.00') {
+  const quotes = ['USDT', 'USDC', 'USD', 'BTC', 'ETH'];
+  let base = symbol;
+  let quote = '';
+  for (const q of quotes) {
+    if (symbol.endsWith(q) && symbol.length > q.length) {
+      base = symbol.slice(0, -q.length);
+      quote = q;
+      break;
+    }
+  }
+  const okxInstId = quote ? `${base}-${quote}` : symbol;
+  return new Response(JSON.stringify({
+    code: '0',
+    msg: '',
+    data: [{ instId: okxInstId, last: price, ts: Date.now().toString() }],
+  }), { status: 200 });
+}
+
+function coinbaseMockResponse(symbol = 'BTCUSDT', price = '65433.00') {
+  const base = symbol.replace(/USDT$|USDC$|USD$|BTC$|ETH$/, '');
+  const currency = symbol.endsWith('USDT') || symbol.endsWith('USDC') ? 'USD' : symbol.slice(-3);
+  return new Response(JSON.stringify({
+    data: { base: base || symbol, currency, amount: price },
+  }), { status: 200 });
+}
+
+function kucoinMockResponse(_symbol = 'BTCUSDT', price = '65429.80') {
+  return new Response(JSON.stringify({
+    code: '200000',
+    data: {
+      time: Date.now(),
+      price,
+      bestBid: price,
+      bestAsk: price,
+    },
+  }), { status: 200 });
+}
+
 function apininjasMockResponse(symbol = 'BTCUSD', price = '65432.10') {
   return new Response(JSON.stringify({ symbol, price }), { status: 200 });
 }
@@ -79,6 +124,9 @@ function multiExchangeMock() {
     const url = getUrlString(input);
     if (url.includes('binance')) return binanceMockResponse();
     if (url.includes('bitget')) return bitgetMockResponse();
+    if (url.includes('okx')) return okxMockResponse();
+    if (url.includes('coinbase')) return coinbaseMockResponse();
+    if (url.includes('kucoin')) return kucoinMockResponse();
     if (url.includes('ninjas')) return apininjasMockResponse();
     if (url.includes('dexscreener')) return dexscreenerMockResponse();
     return new Response('Not found', { status: 404 });
@@ -404,11 +452,14 @@ describe('GET /api/v1/price - all exchanges', () => {
     const body: any = await res.json();
     expect(body.success).toBe(true);
     expect(Array.isArray(body.data)).toBe(true);
-    expect(body.data.length).toBeGreaterThanOrEqual(4);
+    expect(body.data.length).toBeGreaterThanOrEqual(7);
 
     const exchanges = body.data.map((p: any) => p.exchange);
     expect(exchanges).toContain('binance');
     expect(exchanges).toContain('bitget');
+    expect(exchanges).toContain('okx');
+    expect(exchanges).toContain('coinbase');
+    expect(exchanges).toContain('kucoin');
     expect(exchanges).toContain('apininjas');
     expect(exchanges.some((e: string) => e.startsWith('dexscreener:'))).toBe(true);
   });
@@ -471,6 +522,9 @@ describe('GET /api/v1/price - all exchanges', () => {
       ...mockEnv,
       ENABLE_BINANCE: 'false',
       ENABLE_BITGET: 'false',
+      ENABLE_OKX: 'false',
+      ENABLE_COINBASE: 'false',
+      ENABLE_KUCOIN: 'false',
       ENABLE_APININJAS: 'false',
       ENABLE_DEXSCREENER: 'false',
     };
@@ -515,6 +569,7 @@ describe('DexScreener - multi-DEX support', () => {
       const url = getUrlString(input);
       if (url.includes('binance')) return binanceMockResponse();
       if (url.includes('bitget')) return bitgetMockResponse();
+      if (url.includes('okx')) return okxMockResponse();
       if (url.includes('ninjas')) return apininjasMockResponse();
       if (url.includes('dexscreener')) {
         return new Response(JSON.stringify({

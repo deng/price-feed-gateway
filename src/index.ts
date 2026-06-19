@@ -67,12 +67,18 @@ export interface Env {
   // Exchange base URLs
   BINANCE_BASE_URL: string;
   BITGET_BASE_URL: string;
+  OKX_BASE_URL: string;
+  COINBASE_BASE_URL: string;
+  KUCOIN_BASE_URL: string;
   APININJAS_BASE_URL: string;
   DEXSCREENER_BASE_URL: string;
 
   // Enable/disable toggles
   ENABLE_BINANCE: string;
   ENABLE_BITGET: string;
+  ENABLE_OKX: string;
+  ENABLE_COINBASE: string;
+  ENABLE_KUCOIN: string;
   ENABLE_APININJAS: string;
   ENABLE_DEXSCREENER: string;
 
@@ -203,7 +209,7 @@ function caip2ToDexChain(caip2: string): string | null {
     'eip155:250': 'fantom',
     'eip155:8453': 'base',
     'eip155:100': 'gnosis',
-    'solana:5eykt4UsC9g2kiNkGfzE4v2gM9qzDdLuq8vRKji2iCqg': 'solana',
+    'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp': 'solana',
   };
   return map[caip2.toLowerCase()] || null;
 }
@@ -282,6 +288,121 @@ async function getBitgetPrice(env: Env, symbol: string): Promise<Price> {
     symbol: ticker.symbol,
     price: parseFloat(ticker.lastPr),
     exchange: 'bitget',
+    timestamp: Date.now(),
+    cached: false,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// OKX
+// ---------------------------------------------------------------------------
+interface OkxResponse {
+  code: string;
+  msg: string;
+  data: OkxTicker[];
+}
+
+interface OkxTicker {
+  instId: string;
+  last: string;
+  ts: string;
+}
+
+function toOkxSymbol(symbol: string): string {
+  // OKX uses dash separator: BTC-USDT
+  const parsed = parseBaseQuote(symbol);
+  if (!parsed) return symbol;
+  return `${parsed.base}-${parsed.quote}`;
+}
+
+async function getOkxPrice(env: Env, symbol: string): Promise<Price> {
+  const instId = toOkxSymbol(symbol);
+  const url = `${env.OKX_BASE_URL}/api/v5/market/ticker?instId=${instId}`;
+  const res = await fetch(url, { signal: timeoutSignal(env.REQUEST_TIMEOUT_SECS) });
+  if (!res.ok) {
+    throw new Error(`OKX API error ${res.status}: ${await res.text()}`);
+  }
+  const data = (await res.json()) as OkxResponse;
+  if (data.code !== '0') {
+    throw new Error(`OKX API error: ${data.code} - ${data.msg}`);
+  }
+  const ticker = data.data[0];
+  if (!ticker) {
+    throw new Error('No ticker data returned from OKX');
+  }
+  return {
+    symbol: ticker.instId.replace('-', ''),
+    price: parseFloat(ticker.last),
+    exchange: 'okx',
+    timestamp: Date.now(),
+    cached: false,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Coinbase
+// ---------------------------------------------------------------------------
+interface CoinbaseSpotResponse {
+  data: {
+    base: string;
+    currency: string;
+    amount: string;
+  };
+}
+
+async function getCoinbasePrice(env: Env, symbol: string): Promise<Price> {
+  const parsed = parseBaseQuote(symbol);
+  if (!parsed) {
+    throw new Error(`Unable to parse symbol '${symbol}' for Coinbase`);
+  }
+  const pair = `${parsed.base}-${parsed.quote}`;
+  const url = `${env.COINBASE_BASE_URL}/v2/prices/${pair}/spot`;
+  const res = await fetch(url, { signal: timeoutSignal(env.REQUEST_TIMEOUT_SECS) });
+  if (!res.ok) {
+    throw new Error(`Coinbase API error ${res.status}: ${await res.text()}`);
+  }
+  const data = (await res.json()) as CoinbaseSpotResponse;
+  return {
+    symbol: symbol,
+    price: parseFloat(data.data.amount),
+    exchange: 'coinbase',
+    timestamp: Date.now(),
+    cached: false,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// KuCoin
+// ---------------------------------------------------------------------------
+interface KuCoinLevel1Response {
+  code: string;
+  data: {
+    time: number;
+    price: string;
+    bestBid: string;
+    bestAsk: string;
+  };
+}
+
+async function getKuCoinPrice(env: Env, symbol: string): Promise<Price> {
+  const parsed = parseBaseQuote(symbol);
+  if (!parsed) {
+    throw new Error(`Unable to parse symbol '${symbol}' for KuCoin`);
+  }
+  const pair = `${parsed.base}-${parsed.quote}`;
+  const url = `${env.KUCOIN_BASE_URL}/api/v1/market/orderbook/level1?symbol=${pair}`;
+  const res = await fetch(url, { signal: timeoutSignal(env.REQUEST_TIMEOUT_SECS) });
+  if (!res.ok) {
+    throw new Error(`KuCoin API error ${res.status}: ${await res.text()}`);
+  }
+  const data = (await res.json()) as KuCoinLevel1Response;
+  if (data.code !== '200000' || !data.data) {
+    throw new Error(`KuCoin API error: code ${data.code}${!data.data ? ', data is null' : ''}`);
+  }
+  return {
+    symbol,
+    price: parseFloat(data.data.price),
+    exchange: 'kucoin',
     timestamp: Date.now(),
     cached: false,
   };
@@ -552,6 +673,24 @@ const EXCHANGES: ExchangeClient[] = [
     getAllPrices: async (env, symbol) => [await getBitgetPrice(env, symbol)],
   },
   {
+    name: 'okx',
+    enabled: (env) => env.ENABLE_OKX === 'true',
+    getPrice: getOkxPrice,
+    getAllPrices: async (env, symbol) => [await getOkxPrice(env, symbol)],
+  },
+  {
+    name: 'coinbase',
+    enabled: (env) => env.ENABLE_COINBASE === 'true',
+    getPrice: getCoinbasePrice,
+    getAllPrices: async (env, symbol) => [await getCoinbasePrice(env, symbol)],
+  },
+  {
+    name: 'kucoin',
+    enabled: (env) => env.ENABLE_KUCOIN === 'true',
+    getPrice: getKuCoinPrice,
+    getAllPrices: async (env, symbol) => [await getKuCoinPrice(env, symbol)],
+  },
+  {
     name: 'apininjas',
     enabled: (env) => env.ENABLE_APININJAS === 'true',
     getPrice: getApiNinjasPrice,
@@ -761,13 +900,27 @@ app.post('/api/v1/price/batch', async (c) => {
         return { success: true as const, data: price, request: { symbol: item.symbol, chain: item.chain, address: item.address } };
       }
 
-      // Symbol-based: use Binance (fastest CEX)
+      // Symbol-based: try enabled CEX exchanges in order (OKX, Bitget, etc.)
       const parsed = getParsedSymbol(item);
       if ('error' in parsed) {
         return { success: false as const, error: parsed.error, request: { symbol: item.symbol } };
       }
-      const price = await getBinancePrice(c.env, parsed.symbol);
-      return { success: true as const, data: price, request: { symbol: price.symbol } };
+      const cexClients = EXCHANGES.filter(e =>
+        e.name !== 'dexscreener' && e.name !== 'apininjas' && e.enabled(c.env),
+      );
+      if (cexClients.length === 0) {
+        return { success: false as const, error: 'No CEX exchange enabled', request: { symbol: parsed.symbol } };
+      }
+      const triedExchanges: string[] = [];
+      for (const client of cexClients) {
+        try {
+          const price = await client.getPrice(c.env, parsed.symbol);
+          return { success: true as const, data: price, request: { symbol: price.symbol } };
+        } catch (err) {
+          triedExchanges.push(client.name);
+        }
+      }
+      return { success: false as const, error: `Pair not found on any enabled exchange (tried: ${triedExchanges.join(', ')})`, request: { symbol: parsed.symbol } };
     }),
   );
 

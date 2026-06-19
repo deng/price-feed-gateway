@@ -2,7 +2,7 @@ export const openApiSpec = {
   openapi: '3.0.3',
   info: {
     title: 'Price Feed Gateway',
-    description: 'Cryptocurrency price aggregation proxy. Aggregates prices from Binance, Bitget, API Ninjas, and DexScreener. Supports symbol-based queries and contract address lookups.',
+    description: 'Cryptocurrency price aggregation proxy. Aggregates prices from Binance, Bitget, OKX, Coinbase, KuCoin, API Ninjas, and DexScreener. Supports symbol-based queries and contract address lookups.',
     version: '0.1.0',
   },
   servers: [
@@ -77,7 +77,7 @@ export const openApiSpec = {
           {
             name: 'exchange',
             in: 'query',
-            description: 'Exchange name filter. Supported: binance, bitget, apininjas, dexscreener. Omit to return all exchanges.',
+            description: 'Exchange name filter. Supported: binance, bitget, okx, coinbase, kucoin, apininjas, dexscreener. Omit to return all exchanges.',
             schema: { type: 'string' },
             example: 'binance',
           },
